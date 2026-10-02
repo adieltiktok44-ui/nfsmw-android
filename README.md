@@ -21,7 +21,7 @@ Este proyecto adapta a Android el trabajo de recompilación de [nfsmw-nx](https:
 
 ## Instalación y primer inicio
 
-1. Descarga `NFSMW-Android-Evolved-v0.3.5.apk` desde [Releases](https://github.com/codepdbh/nfsmw-android/releases/latest) y ábrelo en el teléfono. Si Android lo solicita, permite **Instalar aplicaciones desconocidas** al navegador o gestor de archivos que estés usando.
+1. Descarga el archivo APK de la última publicación en [Releases](https://github.com/codepdbh/nfsmw-android/releases/latest) y ábrelo en el teléfono. Si Android lo solicita, permite **Instalar aplicaciones desconocidas** al navegador o gestor de archivos que estés usando.
 2. Instala el APK y abre **Need for Speed Most Wanted**. Autoriza el acceso a archivos que solicita la app; en Android 11 o posterior aparece el ajuste de **acceso a todos los archivos**. Después vuelve al launcher.
 3. Copia `default.xex`, `NFS/` y `Movies/` directamente dentro de `Memoria interna/nsfmw-androidevolved/`. También puedes pulsar **Elegir carpeta del juego** y seleccionar la carpeta extraída que contiene esos tres elementos; la app la copia a ese destino.
 4. Comprueba que el launcher marque los archivos como disponibles y pulsa **Jugar**. En modo **Nativo**, la primera vez genera `nfsmw_shaders.nfsp` a partir de tu copia y muestra el avance; espera a que termine. Puede tardar varios minutos. Si la GPU carece de las funciones necesarias, el launcher ofrece **Probar compatibilidad**. También puedes seleccionar **Renderizador → Compatibilidad · experimental**; este modo no necesita esa biblioteca.
