@@ -144,6 +144,7 @@ class ContextoDestinos {
   // Host occlusion query for the game's open one, inside the open pass. Returns its index, or UINT32_MAX
   // if no game query is open or there is no room left. End it before closing the pass.
   virtual uint32_t EmpezarConsultaOclusion() = 0;
+  virtual bool OclusionGpuPermitida() const { return true; }
   virtual void TerminarConsultaOclusion(uint32_t indice) = 0;
 
   // nfsmw_reflejo_visibilidad. Our own occlusion query around a single draw that samples the reflection

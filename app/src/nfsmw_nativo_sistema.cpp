@@ -719,7 +719,13 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
       // Steps C5c-C6: the XenosRecomp SPIR-V needs capabilities that the VkDevice only
       // enables if they are requested before it is created.
       rex::cvar::SetFlagByName("vulkan_native_shader_features", "true");
+#if REX_PLATFORM_ANDROID
+      // Native shaders read their own buffers. They do not use Xenos memory
+      // export / EDRAM emulation, which requires vertex stores and atomics.
+      provider_ = rex::ui::vulkan::VulkanProvider::Create(false, true);
+#else
       provider_ = rex::ui::vulkan::VulkanProvider::Create(true, true);
+#endif
       if (!provider_) {
         REXLOG_ERROR("[nativo] No se pudo crear el dispositivo Vulkan");
         return X_STATUS_UNSUCCESSFUL;
@@ -956,6 +962,9 @@ class SistemaGraficoNativo final : public rex::system::IGraphicsSystem {
     const bool marcas_aqui = marcada(cuentas);
     const bool marcas_antes = direccion >= 32 && marcada(memory_->TranslatePhysical<Cuentas*>(direccion - 32));
     int32_t modo = REXCVAR_GET(nfsmw_nativo_oclusion);
+    if (modo == 1 && destinos_ && !destinos_->OclusionGpuPermitida()) {
+      modo = 2;  // safe fallback: no flare or driver occlusion calls
+    }
     // Test cvar nfsmw_nativo_oclusion_alternar_s: odd intervals use the old faked count.
     if (const int32_t alternar_s = REXCVAR_GET(nfsmw_nativo_oclusion_alternar_s); modo == 1 && alternar_s > 0) {
       const auto ahora = Reloj::now();

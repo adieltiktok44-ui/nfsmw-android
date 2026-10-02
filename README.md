@@ -58,6 +58,29 @@ El juego se abre en horizontal. La superposición táctil incluye dirección, bo
 
 Desde v0.3.5, el joystick también responde al dedo si está activado **Inclinar**: al soltarlo vuelve el control por inclinación. El modo de compatibilidad conserva el camino gráfico original del juego; algunos ajustes específicos del renderizador nativo no se aplican en él.
 
+## Compatibilidad en prueba: v0.3.6-experimental
+
+La nueva compilación de prueba adapta el renderer **Nativo** a controladores sin texturas BC1–BC5:
+convierte los formatos que falten en CPU y conserva sus niveles de detalle, transparencia y cubos.
+También separa los requisitos nativos de los del backend Xenos: la ausencia de
+`vertexPipelineStoresAndAtomics` ya no bloquea el inicio nativo en Android.
+Los requisitos de los shaders nativos, incluidos Vulkan 1.2, `shaderInt64` y los descriptores,
+siguen siendo necesarios; esta adaptación no habilita el renderer nativo en todos los teléfonos.
+
+En **Estabilidad gráfica → Automática · protección Mali**, Mali evita las consultas de oclusión
+del sol y de los reflejos. Conserva los reflejos mediante lecturas y omite el destello solar.
+**Máxima compatibilidad** aplica esta alternativa en cualquier GPU; **Efectos completos**
+permite probar las consultas originales y puede reintroducir cierres en Mali.
+Estos ajustes se aplican al renderer **Nativo**. Xenos conserva sus requisitos propios.
+
+Las pruebas de conversión pasan en PC y ARMv8.0. En el Redmi Note 8 con Vulkan 1.1.128 se
+verificó la subida y lectura de los cinco formatos convertidos, con seis caras y cuatro mips.
+Esto valida la ruta de texturas, no el juego completo ni su rendimiento.
+La ejecución completa en Mali-G615 y Mali-G715 sigue pendiente de testers.
+El APK está disponible como [versión experimental en Releases](https://github.com/codepdbh/nfsmw-android/releases/tag/v0.3.6-experimental).
+Instálalo encima del anterior y selecciona **Renderizador → Nativo** y
+**Estabilidad gráfica → Automática · protección Mali** para probar esta adaptación.
+
 ## Compatibilidad e informes en v0.3.5
 
 Se añade **Renderizador → Compatibilidad · experimental**, que consiguió reproducir las intros y llegar a conducir en el Redmi Note 8 probado. Se corrige una reserva de memoria que causaba cierres en su kernel antiguo. Persisten lentitud y esperas de la GPU; todavía no se ha comprobado una carrera completa ni el soporte de Helio G99/G200.

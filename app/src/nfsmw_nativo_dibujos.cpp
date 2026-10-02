@@ -34,6 +34,7 @@
 
 #include "nfsmw_nativo_vertices_dedupe.h"
 #include "nfsmw_nativo_texturas_pool.h"
+#include "nfsmw_texturas_bc.h"
 #include "nfsmw_nativo_sincronizacion.h"
 
 #include "nfsmw_ajustes_graficos.h"
@@ -368,6 +369,10 @@ REXCVAR_DEFINE_BOOL(nfsmw_nativo_cache_texturas_entre_fotogramas, true, "NFSMW",
 // Uploads the game's mip levels. With only the base level of each texture, distant surfaces looked grainy
 // compared with the Xbox 360. This also fixes the base level of small textures with packed mips, which
 // does not start at the base address.
+REXCVAR_DEFINE_BOOL(nfsmw_nativo_texturas_bc_cpu, false, "NFSMW",
+                    "Forzar conversion BC1-5 en CPU para probar la ruta de GPU sin texturas BC")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
 REXCVAR_DEFINE_BOOL(nfsmw_nativo_mipmaps, true, "NFSMW",
                     "Renderizador nativo: sube los niveles de mip que trae el juego (como en la Xbox 360). false: solo "
                     "el nivel base, como antes de la build 136")
@@ -1711,6 +1716,17 @@ constexpr uint16_t kSwizzleRGGG = (1 << 3) | (1 << 6) | (1 << 9);
 constexpr uint16_t kSwizzleRGBA = (1 << 3) | (2 << 6) | (3 << 9);
 constexpr uint16_t kSwizzleBGRA = 2 | (1 << 3) | (0 << 6) | (3 << 9);
 
+uint32_t IndiceBc(VkFormat formato) {
+  switch (formato) {
+    case VK_FORMAT_BC1_RGBA_UNORM_BLOCK: return 1;
+    case VK_FORMAT_BC2_UNORM_BLOCK: return 2;
+    case VK_FORMAT_BC3_UNORM_BLOCK: return 3;
+    case VK_FORMAT_BC4_UNORM_BLOCK: return 4;
+    case VK_FORMAT_BC5_UNORM_BLOCK: return 5;
+    default: return 0;
+  }
+}
+
 struct FormatoTextura {
   VkFormat formato = VK_FORMAT_UNDEFINED;
   uint8_t bloque = 1;       // texels per block side
@@ -2155,6 +2171,7 @@ class DibujosVulkanImpl final : public DibujosVulkan {
   bool Inicializar() {
     const auto& propiedades = dispositivo_->properties();
     const std::pair<bool, const char*> requisitos[] = {
+        {propiedades.independentBlend, "independentBlend"},
         {propiedades.shaderInt64, "shaderInt64"},
         {propiedades.bufferDeviceAddress, "bufferDeviceAddress"},
         {propiedades.runtimeDescriptorArray, "runtimeDescriptorArray"},
@@ -2170,6 +2187,27 @@ class DibujosVulkanImpl final : public DibujosVulkan {
       if (!presente) {
         REXLOG_ERROR("[nativo] C6: el dispositivo Vulkan no tiene {}: no se dibuja", nombre);
         return false;
+      }
+    }
+    const auto& ifn = dispositivo_->vulkan_instance()->functions();
+    const VkFormat formatos_bc[] = {VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC2_UNORM_BLOCK,
+        VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC5_UNORM_BLOCK};
+    const VkFormat formatos_cpu[] = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM};
+    constexpr VkFormatFeatureFlags requerido = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    for (uint32_t i = 0; i < 5; ++i) {
+      VkFormatProperties fp{};
+      ifn.vkGetPhysicalDeviceFormatProperties(dispositivo_->physical_device(), formatos_bc[i], &fp);
+      bc_cpu_[i] = REXCVAR_GET(nfsmw_nativo_texturas_bc_cpu) || (fp.optimalTilingFeatures & requerido) != requerido;
+      if (bc_cpu_[i]) {
+        const VkFormat host = formatos_cpu[i < 3 ? 0 : i - 2];
+        ifn.vkGetPhysicalDeviceFormatProperties(dispositivo_->physical_device(), host, &fp);
+        if ((fp.optimalTilingFeatures & requerido) != requerido) {
+          REXLOG_ERROR("[nativo] C3: no hay formato de destino para convertir BC{}", i + 1);
+          return false;
+        }
+        REXLOG_INFO("[compatibilidad] BC{}: conversion CPU a {} (mips y cubos incluidos)",
+                    i + 1, i < 3 ? "RGBA8" : i == 3 ? "R8" : "RG8");
       }
     }
     direccion_bufer_ = reinterpret_cast<FnDireccionBufer>(
@@ -4811,7 +4849,7 @@ class DibujosVulkanImpl final : public DibujosVulkan {
     ++fotograma_;
     CerrarFotogramaDeLaGuardiaDelCielo();
     // nfsmw_reflejo_visibilidad, once per submission (the guard may switch it off mid-session).
-    medir_visibilidad_ = nfsmw::reflejo_demanda::MedirVisibilidad();
+    medir_visibilidad_ = contexto_->OclusionGpuPermitida() && nfsmw::reflejo_demanda::MedirVisibilidad();
     if (medir_visibilidad_ && fotograma_ >= testigo_siguiente_) {
       testigo_pendiente_ = true;
     }
@@ -8469,6 +8507,12 @@ class DibujosVulkanImpl final : public DibujosVulkan {
       Avisar(400 + formato, "formato de textura todavia no soportado: se usa una vacia");
       return;
     }
+    const uint32_t indice_bc = IndiceBc(tf.formato);
+    const bool bc_cpu = indice_bc && bc_cpu_[indice_bc - 1];
+    const auto formato_bc = static_cast<nfsmw::bc::Formato>(indice_bc);
+    // Keep tf in the guest format for untiling, mip addresses and byte order.
+    const VkFormat formato_host = !bc_cpu ? tf.formato : indice_bc == 4 ? VK_FORMAT_R8_UNORM
+        : indice_bc == 5 ? VK_FORMAT_R8G8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
     // size_2d: 13 + 13 bits; size_3d: 11 + 11 + 10 bits (xenos.h:1222-1233).
     const uint32_t ancho = volumen ? (f[2] & 0x7FF) + 1 : (f[2] & 0x1FFF) + 1;
     const uint32_t alto = volumen ? ((f[2] >> 11) & 0x7FF) + 1 : ((f[2] >> 13) & 0x1FFF) + 1;
@@ -8637,8 +8681,8 @@ class DibujosVulkanImpl final : public DibujosVulkan {
       const auto antes_crear = std::chrono::steady_clock::now();
       const uint64_t espera_antes_crear = ns_espera_enlaces_total_;
       midiendo_creacion_ = true;
-      const bool creada = CrearTexturaEnHilo(textura, tf.formato, ancho_host, alto_host, capas, fondo, niveles) ||
-                          CrearTextura(textura.imagen, tf.formato, ancho_host, alto_host, capas, fondo, niveles);
+      const bool creada = CrearTexturaEnHilo(textura, formato_host, ancho_host, alto_host, capas, fondo, niveles) ||
+                          CrearTextura(textura.imagen, formato_host, ancho_host, alto_host, capas, fondo, niveles);
       midiendo_creacion_ = false;
       {
         const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -8671,8 +8715,10 @@ class DibujosVulkanImpl final : public DibujosVulkan {
         textura.contenido_por_medir = true;
       }
       for (uint32_t n = 0; n < niveles; ++n) {
-        textura.bytes += uint64_t((std::max(ancho_host >> n, 1u) + tf.bloque - 1) / tf.bloque) *
-                         ((std::max(alto_host >> n, 1u) + tf.bloque - 1) / tf.bloque) * tf.bytes * capas *
+        const uint32_t bloque_host = bc_cpu ? 1 : tf.bloque;
+        const uint32_t bytes_host = bc_cpu ? nfsmw::bc::Canales(formato_bc) : tf.bytes;
+        textura.bytes += uint64_t((std::max(ancho_host >> n, 1u) + bloque_host - 1) / bloque_host) *
+                         ((std::max(alto_host >> n, 1u) + bloque_host - 1) / bloque_host) * bytes_host * capas *
                          (fondo ? fondo : 1);
       }
       bytes_texturas_ += textura.bytes;
@@ -8745,7 +8791,7 @@ class DibujosVulkanImpl final : public DibujosVulkan {
                     nivel_empaquetado == UINT32_MAX ? std::string("ninguno") : std::to_string(nivel_empaquetado));
       }
     }
-    ranura = RanuraVista(textura.imagen.imagen, tf.formato, swizzle, tf.swizzle_host, monton);
+    ranura = RanuraVista(textura.imagen.imagen, formato_host, swizzle, tf.swizzle_host, monton);
     ancho_host_out = textura.imagen.ancho;  // the host's, which is what the shader sees
     alto_host_out = textura.imagen.alto;
     if (textura.fotograma == fotograma_) {
@@ -8905,7 +8951,9 @@ class DibujosVulkanImpl final : public DibujosVulkan {
          * reading from a copy of the bytes this hash covers. If any read falls outside them, or LeerNivel
          * would go past memory, the texture continues on the usual path.
          */
-        if (!textura.imagen.preparada && huellas_fase_ != kHuellasApagado && !diag_mips_ && mosaico_rapido_ >= 0) {
+        // The hash worker copies guest blocks directly into the GPU upload buffer.
+        // Converted textures use the normal path so decoding happens before upload.
+        if (!bc_cpu && !textura.imagen.preparada && huellas_fase_ != kHuellasApagado && !diag_mips_ && mosaico_rapido_ >= 0) {
           std::array<size_t, 16> desplazamientos{};
           std::array<size_t, 16> capa_nivel{};
           size_t bytes_plan = 0;
@@ -9114,6 +9162,16 @@ class DibujosVulkanImpl final : public DibujosVulkan {
     }
     textura.intervalo = 1;
     textura.siguiente = fotograma_ + 1;
+    if (bc_cpu) {
+      if (!nfsmw::bc::Convertir(formato_bc, datos, textura.imagen.ancho, textura.imagen.alto,
+                                capas, textura.niveles, temporal_bc_, textura.desplazamiento_nivel)) {
+        REXLOG_ERROR("[compatibilidad] datos BC{} invalidos: {}x{}, {} capas, {} niveles, {} bytes",
+                     indice_bc, textura.imagen.ancho, textura.imagen.alto, capas, textura.niveles, datos.size());
+        ranura = 0;
+        return;
+      }
+      datos.swap(temporal_bc_);
+    }
     textura.huella = huella;
     textura.datos.swap(datos);
     textura.subir = true;
@@ -12091,6 +12149,7 @@ class DibujosVulkanImpl final : public DibujosVulkan {
   };
 
   const VulkanDevice* dispositivo_;
+  std::array<bool, 5> bc_cpu_{};
   const VulkanDevice::Functions& dfn_;
   VkDevice device_;
   rex::memory::Memory* memoria_;
@@ -12449,6 +12508,7 @@ class DibujosVulkanImpl final : public DibujosVulkan {
   std::array<bool, 1024> sesgos_vistos_{};
   std::vector<Textura*> texturas_a_subir_;
   std::vector<uint8_t> temporal_;
+  std::vector<uint8_t> temporal_bc_;  // reused CPU decode output; only allocated on unsupported BC GPUs
   std::vector<uint32_t, SinInicializar<uint32_t>> indices_;
   std::vector<uint32_t, SinInicializar<uint32_t>> convertidos_;
   std::vector<uint16_t, SinInicializar<uint16_t>> indices16_;  // camino rapido: 16 bits sin convertir

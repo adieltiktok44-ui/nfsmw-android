@@ -29,6 +29,7 @@
 #include "nfsmw_esperas_tiron.h"
 #include "nfsmw_nativo_shaders.h"  // Samplers of the PS (nfsmw_nativo_diag_lectores_s)
 #include "nfsmw_nativo_sincronizacion.h"
+#include "nfsmw_gpu_compatibilidad.h"
 #include "nfsmw_reflejo_demanda.h"  // road reflection only when it is read
 
 #include "nfsmw_ajustes_graficos.h"
@@ -58,6 +59,10 @@ extern "C" void RexSwitchPerfTiron(uint64_t inicio, uint64_t fin);
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+REXCVAR_DEFINE_STRING(nfsmw_consultas_oclusion, "auto", "NFSMW",
+                     "Consultas Vulkan: auto evita oclusiones en Mali Android; off las evita en todas las GPU; on las permite")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
 REXCVAR_DEFINE_BOOL(nfsmw_nativo_sincronizacion_gpu, true, "NFSMW",
                     "Sincroniza subidas, reflejos y lecturas de imagenes entre pases Vulkan")
@@ -1054,11 +1059,18 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
                   consultas_ != VK_NULL_HANDLE ? "medido con marcas de tiempo"
                                                : "no disponible (la cola no tiene marcas)");
       // The game's occlusion queries (the sun flare), counted on the GPU.
+      oclusion_gpu_ = nfsmw::compatibilidad::OclusionGpu(
+          REXCVAR_GET(nfsmw_consultas_oclusion), REX_PLATFORM_ANDROID, fisico.vendorID);
+      // Avoid the entire lifecycle including pool creation/reset. Callers
+      // fall back without changing or persisting the user's other settings.
+      REXLOG_INFO("[compatibilidad] consultas de oclusion: {} (opcion {}, GPU {})",
+                  oclusion_gpu_ ? "activadas" : "desactivadas; reflejos por lecturas, sin destello solar",
+                  REXCVAR_GET(nfsmw_consultas_oclusion), fisico.deviceName);
       VkQueryPoolCreateInfo info_oclusiones{};
       info_oclusiones.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
       info_oclusiones.queryType = VK_QUERY_TYPE_OCCLUSION;
       info_oclusiones.queryCount = uint32_t(ranuras_.size() * kOclusionesPorRanura);
-      if (!leer_consultas_ ||
+      if (!oclusion_gpu_ || !leer_consultas_ ||
           dfn_.vkCreateQueryPool(device_, &info_oclusiones, nullptr, &oclusiones_) != VK_SUCCESS) {
         oclusiones_ = VK_NULL_HANDLE;
       }
@@ -1067,7 +1079,7 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
                   oclusiones_ != VK_NULL_HANDLE ? "disponibles" : "no disponibles: cuenta fingida",
                   oclusion_precisa_ ? "precisas" : "sin precision: cuentan si hubo alguna muestra");
       // nfsmw_reflejo_visibilidad, in a separate pool so as not to touch the count of the game's queries.
-      if (nfsmw::reflejo_demanda::MedirVisibilidad() && leer_consultas_) {
+      if (oclusion_gpu_ && nfsmw::reflejo_demanda::MedirVisibilidad() && leer_consultas_) {
         VkQueryPoolCreateInfo info_visibilidad{};
         info_visibilidad.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
         info_visibilidad.queryType = VK_QUERY_TYPE_OCCLUSION;
@@ -3687,6 +3699,8 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
     std::copy(std::begin(estadisticas_oclusion_), std::end(estadisticas_oclusion_), valores);
   }
 
+  bool OclusionGpuPermitida() const override { return oclusion_gpu_; }
+
   uint32_t EmpezarConsultaOclusion() override {
     if (oclusiones_ == VK_NULL_HANDLE || oclusion_abierta_ == 0 || !grabando_) {
       return UINT32_MAX;
@@ -5812,6 +5826,7 @@ class DestinosVulkan final : public DestinosNativos, public ContextoDestinos {
   // complete count of each D3D structure and, accumulated, spans, spans without room, published queries,
   // published samples and the maximum of a single query.
   VkQueryPool oclusiones_ = VK_NULL_HANDLE;
+  bool oclusion_gpu_ = true;
   // Pipeline statistics per pass category.
   VkQueryPool estadisticas_ = VK_NULL_HANDLE;
   std::array<uint64_t, kGpuCategorias> fragmentos_categoria_{};

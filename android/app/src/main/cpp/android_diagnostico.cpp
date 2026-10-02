@@ -64,6 +64,7 @@ std::string Probe() {
   };
   // The SDK currently enables the native shader interface through Vulkan 1.2.
   require(props.apiVersion >= VK_API_VERSION_1_2, "Vulkan 1.2 o posterior");
+  require(features.independentBlend, "independentBlend");
   require(features.shaderInt64, "shaderInt64");
   require(features.shaderSampledImageArrayDynamicIndexing, "shaderSampledImageArrayDynamicIndexing");
   require(v12.bufferDeviceAddress, "bufferDeviceAddress (interfaz Vulkan 1.2)");
@@ -72,6 +73,9 @@ std::string Probe() {
   require(v12.descriptorBindingSampledImageUpdateAfterBind, "descriptorBindingSampledImageUpdateAfterBind");
   require(v12.descriptorBindingUpdateUnusedWhilePending, "descriptorBindingUpdateUnusedWhilePending");
   std::ostringstream formats;
+  std::ostringstream conversions;
+  conversions << '[';
+  bool first_conversion = true;
   formats << '{';
   const VkFormat bc[] = {VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_BC2_UNORM_BLOCK,
                          VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_BC5_UNORM_BLOCK};
@@ -82,11 +86,26 @@ std::string Probe() {
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
     bool supported = (fp.optimalTilingFeatures & required) == required;
     std::string name = "BC" + std::to_string(i + 1);
-    if (i < 3 && !supported) missing.push_back("Texturas " + name);
+    if (!supported) {
+      // The native renderer now decodes unsupported BC formats on the CPU.
+      // Only reject the device if the corresponding uncompressed format is
+      // unavailable too. Keep missing BC in the report as a conversion.
+      const VkFormat host = i < 3 ? VK_FORMAT_R8G8B8A8_UNORM
+          : i == 3 ? VK_FORMAT_R8_UNORM : VK_FORMAT_R8G8_UNORM;
+      VkFormatProperties host_props{};
+      vkGetPhysicalDeviceFormatProperties(gpu, host, &host_props);
+      require((host_props.optimalTilingFeatures & required) == required,
+              i < 3 ? "Texturas RGBA8 (conversion BC1-3)"
+                    : i == 3 ? "Texturas R8 (conversion BC4)" : "Texturas RG8 (conversion BC5)");
+      if (!first_conversion) conversions << ',';
+      first_conversion = false;
+      conversions << Json(name);
+    }
     if (i) formats << ',';
     formats << Json(name) << ':' << (supported ? "true" : "false");
   }
   formats << '}';
+  conversions << ']';
   std::ostringstream output;
   output << "{\"gpu\":" << Json(props.deviceName)
          << ",\"vulkan\":" << Json(std::to_string(VK_VERSION_MAJOR(props.apiVersion)) + "." +
@@ -94,6 +113,10 @@ std::string Probe() {
          << ",\"driverVersion\":" << props.driverVersion
          << ",\"vendorId\":" << props.vendorID
          << ",\"textureFormats\":" << formats.str()
+         << ",\"cpuTextureConversions\":" << conversions.str()
+         << ",\"vertexPipelineStoresAndAtomics\":" << (features.vertexPipelineStoresAndAtomics ? "true" : "false")
+         << ",\"fragmentStoresAndAtomics\":" << (features.fragmentStoresAndAtomics ? "true" : "false")
+         << ",\"occlusionQueriesDefault\":" << Json(props.vendorID == 0x13B5 ? "off" : "on")
          << ",\"checkedRenderer\":\"nativo\""
          << ",\"compatible\":" << (missing.empty() ? "true" : "false") << ",\"missing\":[";
   for (size_t i = 0; i < missing.size(); ++i) {

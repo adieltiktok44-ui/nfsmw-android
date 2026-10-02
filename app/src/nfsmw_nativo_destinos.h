@@ -76,6 +76,7 @@ class DestinosNativos {
   // until Terminar counts for the base structure. Terminar: returns the last complete count measured for
   // that structure, in host samples and from an earlier frame, or false if there is none yet.
   virtual void EmpezarOclusion(uint32_t base) = 0;
+  virtual bool OclusionGpuPermitida() const { return true; }
   virtual bool TerminarOclusion(uint32_t base, uint64_t& muestras) = 0;
   // Accumulated: spans counted on the host, spans without room, published queries, published samples and
   // the maximum of a single query.

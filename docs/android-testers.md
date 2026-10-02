@@ -26,6 +26,53 @@ archivos del juego, partidas, identificadores del telefono ni registros de
 otras apps. El ZIP no se envia automaticamente. GitHub no recibe adjuntos
 desde un enlace: el tester adjunta el archivo en el formulario.
 
+## Prueba de compatibilidad nativa en 0.3.6-experimental
+
+El ZIP `NFSMW-diagnostico-20261001-180803-912.zip` corresponde a Xiaomi
+2406APNFAG, Android 16 y Mali-G615 MC6 con Vulkan 1.3.247. Sus dos logs
+nativos terminan rechazando `vertexPipelineStoresAndAtomics` antes de crear
+el dispositivo; `gpu.json` marca BC1-5 ausentes y bloquea Nativo por BC1-3.
+El logcat es de unos 24 minutos después y no contiene una traza del fallo.
+No demuestra el cierre por oclusiones descrito por el otro tester del Pixel.
+
+La compilación experimental separa los requisitos del renderer nativo de
+los de Xenos y convierte BC1-5 a RGBA8/R8/RG8 cuando faltan. `gpu.json`
+conserva las capacidades reales y añade `cpuTextureConversions`, los bits
+de stores/atomics y `occlusionQueriesDefault`. Un formato BC ausente no
+bloquea Nativo si existe su formato de conversión. Se conserva el rechazo
+de las funciones de shaders realmente necesarias.
+
+Para probar en Mali, selecciona **Renderizador → Nativo** y **Estabilidad
+gráfica → Automática · protección Mali**, empieza en 1024×576 / 30 FPS y
+deja pasar las intros, el menú y una carrera. Comprueba texturas, carretera,
+coche, transparencias y reflejos. Envía un nuevo ZIP inmediatamente si falla,
+indicando la última pantalla y los ajustes utilizados.
+
+El ajuste automático evita todo el ciclo de consultas de oclusión en Mali
+Android (creación, reset, begin/end y lectura de ambos pools). Se suprime
+el destello solar y se decide el reflejo mediante lecturas de su textura.
+Las consultas de tiempo/estadísticas son independientes y se conservan.
+Es una alternativa conservadora basada en el reporte del tester; todavía
+no se ha confirmado la causa de su cierre ni validado esta corrección en Mali.
+**Máxima compatibilidad** hace lo mismo en cualquier GPU. **Efectos completos**
+reactiva las oclusiones para comparar y puede provocar el cierre reportado.
+La elección no modifica los otros ajustes del usuario.
+
+Se comprobaron en PC y en el Redmi conectado los colores y alpha de BC1-5,
+bordes no múltiplos de cuatro, orden de caras/mips, alineación de subidas y
+rechazo de entradas inválidas. La prueba Vulkan en ese Redmi (Adreno 610,
+Vulkan 1.1.128, sin BC) subió los cinco formatos convertidos a cubos de seis
+caras y cuatro mips y obtuvo los mismos píxeles al leerlos de la GPU.
+Esta prueba no usa archivos del juego y no valida una partida completa.
+El Redmi sigue necesitando Xenos por las otras funciones nativas ausentes.
+
+Pruebas independientes para desarrolladores:
+
+```text
+tools/tests/texturas_bc_test.cpp        # C++20, PC o Android ARM64
+tools/tests/texturas_bc_vulkan_test.cpp # C++20, headers Vulkan y -lvulkan; Android ARM64
+```
+
 ## Redmi Note 8 revisado
 
 En el dispositivo conectado el 1 de octubre de 2026 se comprobaron:

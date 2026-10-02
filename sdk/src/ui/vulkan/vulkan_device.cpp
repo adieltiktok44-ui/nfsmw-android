@@ -642,7 +642,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   XE_UI_VULKAN_LIMIT(optimalBufferCopyRowPitchAlignment)
   XE_UI_VULKAN_LIMIT(nonCoherentAtomSize)
 
-  if (with_gpu_emulation) {
+  // Native rendering needs these optional raster/sampler/query features too,
+  // but must not inherit the mandatory Xenos stores/atomics checks above.
+  if (with_gpu_emulation || REXCVAR_GET(vulkan_native_shader_features)) {
     XE_UI_VULKAN_FEATURE(robustBufferAccess)
     XE_UI_VULKAN_FEATURE(fullDrawIndexUint32)
     XE_UI_VULKAN_FEATURE(independentBlend)
