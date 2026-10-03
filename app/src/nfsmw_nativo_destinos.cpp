@@ -64,7 +64,7 @@ REXCVAR_DEFINE_STRING(nfsmw_consultas_oclusion, "auto", "NFSMW",
                      "Consultas Vulkan: auto evita oclusiones en Mali Android; off las evita en todas las GPU; on las permite")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
-REXCVAR_DEFINE_BOOL(nfsmw_nativo_sincronizacion_gpu, true, "NFSMW",
+REXCVAR_DEFINE_BOOL(nfsmw_nativo_sincronizacion_gpu, false, "NFSMW",
                     "Sincroniza subidas, reflejos y lecturas de imagenes entre pases Vulkan")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 
